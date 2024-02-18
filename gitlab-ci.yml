@@ -1,0 +1,109 @@
+stages:
+  - build
+  - deploy
+
+
+variables:
+  DOCKER_TLS_CERTDIR: ""
+  IMAGE_VERSION: ${CI_COMMIT_SHORT_SHA}
+  BUILD_MODE: DEV
+  CONTAINER_IMAGE: tankitem:${CI_COMMIT_SHORT_SHA}
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+cache:
+  paths:
+    - .cache/pip
+    - venv/
+build:
+  image: docker.baaz.mn/builder
+  stage: build
+  before_script:
+    - export BUILD_DATE=`date +"%Y-%m-%dT%H:%M:%S"`
+  variables:
+    SET_CONTAINER_TIMEZONE: "True"
+    CONTAINER_TIMEZONE: Asia/Ulaanbaatar
+    TZ: Asia/Ulaanbaatar
+  script:
+    - echo "Building TANK Item"
+    - echo "Docker Host ${DOCKER_HOST}"
+    - docker build -t ${CONTAINER_IMAGE} . --build-arg BUILD_DATE --build-arg IMAGE_VERSION --build-arg BUILD_MODE
+    - docker tag ${CONTAINER_IMAGE} ${CONTAINER_IMAGE}
+    - docker tag ${CONTAINER_IMAGE} docker.baaz.mn/${CONTAINER_IMAGE}
+    - docker push docker.baaz.mn/${CONTAINER_IMAGE}
+  tags:
+    - runner-container
+  only:
+    - development
+    - master
+    - production
+
+
+.deploy_template:
+  stage: deploy
+  image: docker.baaz.mn/deploy
+  variables:
+    REPLICA_COUNT: "1"
+    DEPLOY_SERVER: ${DEVELOP_SERVER}
+    CERTIFICATE_AUTHORITY_DATA: ${DEVELOP_DEPLOY_CERTIFICATE_AUTHORITY_DATA}
+    USER_TOKEN: ${DEVELOP_USER_TOKEN}
+  script:
+    - echo "Deploy TANK Item"
+    - kubectl config set-cluster k8s --server="${DEPLOY_SERVER}"
+    - kubectl config set clusters.k8s.certificate-authority-data ${CERTIFICATE_AUTHORITY_DATA}
+    - kubectl config set-credentials gitlab_auto_cicd --token="${USER_TOKEN}"
+    - kubectl config set-context default --cluster=k8s --user=gitlab_auto_cicd --namespace=${NAMESPACE}
+    - kubectl config use-context default
+    - kubectl config get-contexts
+    - kubectl config current-context
+
+    - sed -i "s/<VERSION>/${CI_COMMIT_SHORT_SHA}/g" deployment.yml
+    - sed -i "s/<VERSION>/${CI_COMMIT_SHORT_SHA}/g" migration.yaml
+    - sed -i "s/<REPLICA_COUNT>/${REPLICA_COUNT}/g" deployment.yml
+    - sed -i "s/<EMAIL_SUBJECT_PREFIX>/${EMAIL_SUBJECT_PREFIX}/g" deployment.yml
+    
+    - kubectl delete --ignore-not-found=true -f migration.yaml
+
+    - kubectl apply -f migration.yaml
+    - kubectl apply -f deployment.yml
+
+
+deploy_develop:
+  extends: .deploy_template
+  variables:
+    REPLICA_COUNT: "1"
+    EMAIL_SUBJECT_PREFIX: "DEV"
+    DEPLOY_SERVER: ${DEVELOP_SERVER}
+    CERTIFICATE_AUTHORITY_DATA: ${DEVELOP_DEPLOY_CERTIFICATE_AUTHORITY_DATA}
+    USER_TOKEN: ${DEVELOP_USER_TOKEN}
+  environment:
+    name: development
+  only:
+    - development
+
+
+deploy_staging:
+  extends: .deploy_template
+  variables:
+    REPLICA_COUNT: "1"
+    EMAIL_SUBJECT_PREFIX: "STG"
+    DEPLOY_SERVER: ${STAGING_SERVER}
+    CERTIFICATE_AUTHORITY_DATA: ${STAGING_DEPLOY_CERTIFICATE_AUTHORITY_DATA}
+    USER_TOKEN: ${STAGING_USER_TOKEN}
+  environment:
+    name: staging
+  only:
+    - master
+
+
+deploy_production:
+  extends: .deploy_template
+  variables:
+    REPLICA_COUNT: "1"
+    EMAIL_SUBJECT_PREFIX: "PROD"
+    DEPLOY_SERVER: ${SKYTEL_PRODUCTION_SERVER}
+    CERTIFICATE_AUTHORITY_DATA: ${SKYTEL_PRODUCTION_DEPLOY_CERTIFICATE_AUTHORITY_DATA}
+    USER_TOKEN: ${SKYTEL_PRODUCTION_USER_TOKEN}
+  environment:
+    name: Prod Skytel
+  when: manual
+  only:
+    - production
