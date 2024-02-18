@@ -10,8 +10,3 @@
 - runner ni container bol restart hiihed exited statustai containeruud automaar ustdag
 - update (backupaasaa restore hj shiidsen)
 - update bainga hiihgui ch release unshij uurdin code (lib odlgui) hamaarch update hiih
-
-
-gandush@databank.mn
-
-
